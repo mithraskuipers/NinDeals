@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NinDeals</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <span class="brand-name">NinDeals</span>
+    </div>
+    <div class="system-switch" role="tablist" aria-label="Console">
+      <button class="seg active" data-system="all" role="tab" aria-selected="true">Alle</button>
+      <button class="seg" data-system="switch1" role="tab" aria-selected="false">Switch</button>
+      <button class="seg" data-system="switch2" role="tab" aria-selected="false">Switch 2</button>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <section class="hero">
+    <h1>Vind de beste Nintendo eShop deals.</h1>
+    <p class="hero-sub">Eén overzicht van elke game in de Nintendo eShop, met het werkelijke kortingspercentage direct zichtbaar.</p>
+
+    <div class="scan-row">
+      <button id="scanBtn" class="btn-primary">
+        <span class="btn-label">Start scan</span>
+      </button>
+      <a id="sourceLink" class="source-link" href="#" target="_blank" rel="noopener">Bekijk bron op Nintendo.com ↗</a>
+    </div>
+
+    <div id="progress" class="progress hidden">
+      <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
+      <div id="progressLabel" class="progress-label">Bezig…</div>
+    </div>
+
+    <div id="errorBox" class="error-box hidden"></div>
+  </section>
+
+  <section id="controls" class="controls hidden">
+    <div class="controls-row">
+      <div class="field grow">
+        <label for="searchInput">Zoeken</label>
+        <input id="searchInput" type="text" placeholder="Zoek op titel…" />
+      </div>
+
+      <div class="field">
+        <label for="sortSelect">Sorteren op</label>
+        <select id="sortSelect">
+          <option value="discount-desc">Hoogste korting</option>
+          <option value="price-asc">Laagste prijs</option>
+          <option value="price-desc">Hoogste prijs</option>
+          <option value="title-asc">Titel A–Z</option>
+        </select>
+      </div>
+
+      <label class="field checkbox">
+        <input type="checkbox" id="onSaleOnly" checked />
+        <span>Alleen afgeprijsd</span>
+      </label>
+    </div>
+
+    <div class="controls-row">
+      <div class="field grow">
+        <label>Minimale korting <span id="minDiscountVal">0%</span></label>
+        <input id="minDiscount" type="range" min="0" max="95" value="0" step="5" />
+      </div>
+
+      <div class="field grow">
+        <label>Prijs <span id="priceRangeVal">€0 – €80+</span></label>
+        <div class="dual-range">
+          <input id="priceMin" type="range" min="0" max="80" value="0" step="1" />
+          <input id="priceMax" type="range" min="0" max="80" value="80" step="1" />
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="summary" class="summary hidden">
+    <span id="summaryText"></span>
+  </section>
+
+  <section id="grid" class="grid"></section>
+
+  <div id="emptyState" class="empty-state hidden">
+    <p>Geen games gevonden met deze filters.</p>
+  </div>
+
+</main>
+
+<footer class="footer">
+  <p>Data afkomstig van de publieke Nintendo of Europe zoek-API. Geen affiliatie met Nintendo.</p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
