@@ -1,64 +1,27 @@
 /* ----------------------------------------------------------------------
-   Nintendo eShop Deal Finder
+   NinDeals
    ----------------------------------------------------------------------
-   No backend: this fetches Nintendo of Europe's public search endpoint
-   directly from the browser (the same data source the eShop website's
-   own search is built on top of). It is not an official/documented API,
-   so field names below are matched defensively with several fallback
-   candidates. If titles/prices ever stop showing up, open the console
-   (a raw sample document is logged after the first fetch) and adjust
-   the FIELD_CANDIDATES map below to match whatever the API returns now.
+   Pure client-side, live, on-demand. Nothing is stored anywhere except
+   in memory for this browser session.
+
+   Nintendo's search backend is an Apache Solr instance. Solr's JSON
+   response writer supports a "json.wrf" callback parameter, i.e. JSONP:
+   the classic pre-CORS technique of loading cross-origin JSON via a
+   <script> tag instead of fetch(). Script tags are never subject to CORS,
+   so this reaches Nintendo's API directly from the browser with no proxy
+   and no backend of any kind.
+
+   This depends on Nintendo's Solr instance having JSONP enabled. If it
+   ever isn't (some Solr configs disable json.wrf for security reasons),
+   the request below will time out — see the error message in that case.
    ------------------------------------------------------------------- */
 
 const LOCALE = "nl";
 const SOLR_URL = `https://search.nintendo-europe.com/${LOCALE}/select`;
 const ROWS_PER_PAGE = 200;
-const MAX_ROWS_SAFETY = 20000; // hard stop so a runaway loop can't fetch forever
-const PAGE_DELAY_MS = 350; // small pause between requests so we don't hammer the API
-
-// Fetch strategies tried in order until one works. "local" only exists when
-// the site is served by our own server.py (start.sh / start.bat) — it asks
-// our own server to fetch Nintendo's API for us, which sidesteps CORS
-// entirely and doesn't depend on any third-party service. When the site is
-// hosted as plain static files (e.g. GitHub Pages) that endpoint 404s and
-// the loop falls through to public CORS proxies instead. Public proxies are
-// free services that come and go / rate-limit unpredictably, so several are
-// listed as fallbacks; unwrap() extracts the real JSON from whatever shape
-// each proxy wraps it in.
-const FETCH_STRATEGIES = [
-  {
-    name: "local-proxy",
-    build: (url) => `/__proxy__?target=${encodeURIComponent(url)}`,
-    unwrap: (data) => data,
-  },
-  {
-    name: "direct",
-    build: (url) => url,
-    unwrap: (data) => data,
-  },
-  {
-    name: "corsproxy.io",
-    build: (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
-    unwrap: (data) => data,
-  },
-  {
-    name: "cors.lol",
-    build: (url) => `https://api.cors.lol/url=${encodeURIComponent(url)}`,
-    unwrap: (data) => data,
-  },
-  {
-    name: "allorigins",
-    build: (url) =>
-      `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-    unwrap: (data) => JSON.parse(data.contents),
-  },
-  {
-    name: "whateverorigin",
-    build: (url) =>
-      `https://whateverorigin.org/get?url=${encodeURIComponent(url)}`,
-    unwrap: (data) => JSON.parse(data.contents),
-  },
-];
+const MAX_ROWS_SAFETY = 20000;
+const PAGE_DELAY_MS = 350; // small pause between requests, be gentle on the API
+const JSONP_TIMEOUT_MS = 12000;
 
 const FIELD_CANDIDATES = {
   title: ["title", "title_s", "pageTitle"],
@@ -71,12 +34,7 @@ const FIELD_CANDIDATES = {
     "price_has_discount_f",
   ],
   url: ["url", "url_s", "product_url_s"],
-  image: [
-    "image_url_sq_s",
-    "image_url_h2x1_s",
-    "image_url",
-    "image_url_s",
-  ],
+  image: ["image_url_sq_s", "image_url_h2x1_s", "image_url", "image_url_s"],
 };
 
 const SOURCE_URLS = {
@@ -85,9 +43,9 @@ const SOURCE_URLS = {
   switch1: "https://www.nintendo.com/nl-nl/Zoeken/Zoeken-299117.html?f=147394-5-10-57-6970-11772",
 };
 
-let allGames = []; // normalized, deduped
+let allGames = [];
 let currentSystem = "all";
-let workingProxyIndex = null;
+let jsonpCounter = 0;
 
 // ---------------------------------------------------------------------
 // DOM refs
@@ -114,12 +72,58 @@ const priceMax = document.getElementById("priceMax");
 const priceRangeVal = document.getElementById("priceRangeVal");
 
 // ---------------------------------------------------------------------
-// Helpers
+// JSONP transport (no server, no proxy, no CORS involved at all)
 // ---------------------------------------------------------------------
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function fetchViaJsonp(baseUrl, timeoutMs = JSONP_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const callbackName = `nindeals_cb_${Date.now()}_${jsonpCounter++}`;
+    const script = document.createElement("script");
+    let settled = false;
+
+    const cleanup = () => {
+      delete window[callbackName];
+      script.remove();
+      clearTimeout(timer);
+    };
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(
+        new Error(
+          "Geen antwoord (timeout). Nintendo's zoekserver ondersteunt mogelijk geen JSONP meer."
+        )
+      );
+    }, timeoutMs);
+
+    window[callbackName] = (data) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(data);
+    };
+
+    script.onerror = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("Kon de zoek-API niet laden (scriptfout)."));
+    };
+
+    const separator = baseUrl.includes("?") ? "&" : "?";
+    script.src = `${baseUrl}${separator}json.wrf=${callbackName}`;
+    document.head.appendChild(script);
+  });
+}
+
+// ---------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------
 function firstDefined(doc, keys) {
   for (const k of keys) {
     const v = doc[k];
@@ -174,41 +178,13 @@ function normalizeDoc(doc) {
 function buildQueryUrl(start) {
   const params = new URLSearchParams({
     q: "*",
-    fq: 'type:GAME AND product_code_txt:*',
+    fq: "type:GAME AND product_code_txt:*",
     sort: "sorting_title asc",
     start: String(start),
     rows: String(ROWS_PER_PAGE),
     wt: "json",
   });
   return `${SOLR_URL}?${params.toString()}`;
-}
-
-async function fetchViaProxies(url) {
-  // Once a strategy has proven to work, stick with it instead of
-  // re-probing every candidate on every page of results.
-  const indices =
-    workingProxyIndex != null
-      ? [workingProxyIndex]
-      : FETCH_STRATEGIES.map((_, i) => i);
-
-  let lastErr;
-  for (const i of indices) {
-    const strategy = FETCH_STRATEGIES[i];
-    try {
-      const res = await fetch(strategy.build(url));
-      if (!res.ok) throw new Error(`${strategy.name}: HTTP ${res.status}`);
-      const data = await res.json();
-      const unwrapped = strategy.unwrap(data);
-      if (!unwrapped || !unwrapped.response) {
-        throw new Error(`${strategy.name}: unexpected response shape`);
-      }
-      workingProxyIndex = i;
-      return unwrapped;
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-  throw lastErr || new Error("All fetch attempts failed");
 }
 
 // ---------------------------------------------------------------------
@@ -229,21 +205,15 @@ async function runScan() {
   try {
     let start = 0;
     let numFound = null;
-    let loggedSample = false;
     const seen = new Set();
 
     while (numFound === null || (start < numFound && start < MAX_ROWS_SAFETY)) {
-      const data = await fetchViaProxies(buildQueryUrl(start));
+      const data = await fetchViaJsonp(buildQueryUrl(start));
       const resp = data.response;
       if (!resp) throw new Error("Onverwacht antwoord van de zoek-API.");
 
       numFound = resp.numFound;
       const docs = resp.docs || [];
-
-      if (!loggedSample && docs[0]) {
-        console.log("Sample raw document from Nintendo search API:", docs[0]);
-        loggedSample = true;
-      }
 
       for (const doc of docs) {
         const game = normalizeDoc(doc);
@@ -259,9 +229,6 @@ async function runScan() {
       progressLabel.textContent = `${allGames.length} van ${numFound} games opgehaald…`;
 
       if (docs.length === 0) break;
-
-      // Small pause between requests so we don't hammer the API with a
-      // tight loop of ~60 requests in a row.
       if (start < numFound && start < MAX_ROWS_SAFETY) {
         await sleep(PAGE_DELAY_MS);
       }
@@ -274,9 +241,7 @@ async function runScan() {
   } catch (err) {
     console.error(err);
     errorBox.textContent =
-      "Kon de Nintendo zoek-API niet bereiken. Dit is een publieke maar niet-officiële endpoint " +
-      "en kan geblokkeerd zijn door CORS of tijdelijk niet beschikbaar zijn. Open de console voor details. " +
-      "(" + (err.message || err) + ")";
+      "Kon de Nintendo zoek-API niet bereiken via JSONP. " + (err.message || err);
     errorBox.classList.remove("hidden");
   } finally {
     scanBtn.disabled = false;

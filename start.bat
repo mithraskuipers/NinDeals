@@ -19,7 +19,7 @@ if %errorlevel%==0 (
 )
 
 echo Starting NinDeals on port %PORT%...
-start "NinDeals Server" /min cmd /c "%PYCMD% server.py %PORT%"
+start "NinDeals Server" /min cmd /c "%PYCMD% -m http.server %PORT% --bind 0.0.0.0"
 
 timeout /t 2 /nobreak >nul
 
