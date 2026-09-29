@@ -4,8 +4,17 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>NinDeals</title>
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
 <link rel="icon" href="data:," />
-<link rel="stylesheet" href="styles.css" />
+<!-- styles.css and app.js get a unique ?v= on every visit, so they are never taken from the browser cache -->
+<script>
+  document.write('<link rel="stylesheet" href="styles.css?v=' + Date.now() + '">');
+  // Back/forward buttons can restore a frozen old copy of the page: reload instead.
+  window.addEventListener("pageshow", function (e) { if (e.persisted) location.reload(); });
+</script>
+<noscript><link rel="stylesheet" href="styles.css" /></noscript>
 </head>
 <body>
 
@@ -145,6 +154,7 @@
   <p>Data afkomstig van de publieke Nintendo of Europe zoek-API. Geen affiliatie met Nintendo.</p>
 </footer>
 
-<script src="app.js"></script>
+<script>document.write('<script src="app.js?v=' + Date.now() + '"><\/script>');</script>
+<noscript>Deze pagina heeft JavaScript nodig.</noscript>
 </body>
 </html>
