@@ -18,7 +18,7 @@ const LOCALE = "nl";
 const SOLR_URL = `https://search.nintendo-europe.com/${LOCALE}/select`;
 const ROWS_PER_PAGE = 200;
 const MAX_ROWS_SAFETY = 20000;
-const PAGE_DELAY_MS = 350; // small pause between requests, be gentle on the API
+// Delay between pages is set by the user (#delayInput, default 0.35 s).
 const SNAPSHOT_URL = "games.json";
 
 const FIELD_CANDIDATES = {
@@ -50,6 +50,9 @@ let dataNote = "";
 // DOM refs
 // ---------------------------------------------------------------------
 const scanBtn = document.getElementById("scanBtn");
+const forceBtn = document.getElementById("forceBtn");
+const delayInput = document.getElementById("delayInput");
+const scanInfo = document.getElementById("scanInfo");
 const sourceLink = document.getElementById("sourceLink");
 const progressEl = document.getElementById("progress");
 const progressBar = document.getElementById("progressBar");
@@ -80,9 +83,19 @@ function sleep(ms) {
 }
 
 // Only exists when served by server.py. Anywhere else this is a 404.
+// Throws Error("NO_PROXY") when there is no local server, and
+// Error("UPSTREAM_<status>") when the server is there but Nintendo's API failed.
 async function fetchViaLocalProxy(url) {
-  const res = await fetch(`__proxy__?target=${encodeURIComponent(url)}`);
-  if (!res.ok) throw new Error("NO_PROXY");
+  let res;
+  try {
+    res = await fetch(`__proxy__?target=${encodeURIComponent(url)}`);
+  } catch {
+    throw new Error("NO_PROXY");
+  }
+  if (res.status === 404 || res.status === 405 || res.status === 501) {
+    throw new Error("NO_PROXY");
+  }
+  if (!res.ok) throw new Error("UPSTREAM_" + res.status);
   let data;
   try {
     data = await res.json();
@@ -165,13 +178,13 @@ function normalizeDoc(doc) {
   };
 }
 
-function buildQueryUrl(start) {
+function buildQueryUrl(start, rows = ROWS_PER_PAGE) {
   const params = new URLSearchParams({
     q: "*",
     fq: "type:GAME AND product_code_txt:*",
     sort: "sorting_title asc",
     start: String(start),
-    rows: String(ROWS_PER_PAGE),
+    rows: String(rows),
     wt: "json",
   });
   return `${SOLR_URL}?${params.toString()}`;
@@ -180,11 +193,84 @@ function buildQueryUrl(start) {
 // ---------------------------------------------------------------------
 // Scan
 // ---------------------------------------------------------------------
-async function scanLive() {
+function getDelaySeconds() {
+  const v = parseFloat(String(delayInput.value).replace(",", "."));
+  return isNaN(v) || v < 0 ? 0 : v;
+}
+
+function formatDuration(totalSeconds) {
+  const s = Math.max(0, Math.round(totalSeconds));
+  if (s < 60) return `${s} sec`;
+  const m = Math.floor(s / 60);
+  const rest = s % 60;
+  return rest ? `${m} min ${rest} sec` : `${m} min`;
+}
+
+// Rough estimate: every page costs one request (assumed at least 0.8 s, or
+// twice the measured round trip of the small preflight request, because full
+// pages are bigger) plus the user's delay between pages.
+function estimateSeconds(pages, delaySec, rttSec) {
+  const perRequest = Math.max(0.8, (rttSec || 0) * 2);
+  return pages * perRequest + Math.max(0, pages - 1) * delaySec;
+}
+
+let catalogInfo = null; // { numFound, pages, rtt } once the preflight worked
+let catalogError = null;
+
+async function checkCatalog() {
+  scanInfo.textContent = "Aantal pagina's ophalen…";
+  const t0 = performance.now();
+  try {
+    const data = await fetchViaLocalProxy(buildQueryUrl(0, 1));
+    const numFound = data.response.numFound || 0;
+    catalogInfo = {
+      numFound,
+      pages: Math.ceil(numFound / ROWS_PER_PAGE),
+      rtt: (performance.now() - t0) / 1000,
+    };
+    catalogError = null;
+  } catch (err) {
+    catalogInfo = null;
+    catalogError = err && err.message ? err.message : String(err);
+  }
+  renderScanInfo();
+}
+
+function renderScanInfo() {
+  if (catalogInfo) {
+    const delay = getDelaySeconds();
+    const est = estimateSeconds(catalogInfo.pages, delay, catalogInfo.rtt);
+    let text =
+      `${catalogInfo.numFound.toLocaleString("nl-NL")} games gevonden in ` +
+      `${catalogInfo.pages} pagina's van ${ROWS_PER_PAGE} · geschatte scantijd ca. ${formatDuration(est)}`;
+    if (delay === 0) text += " · let op: zonder vertraging is de kans op blokkade groter";
+    scanInfo.textContent = text;
+  } else if (catalogError === "NO_PROXY") {
+    scanInfo.textContent =
+      "Geen lokale server gevonden: 'Start scan' laadt games.json. Een live scan of volledige herscan " +
+      "kan alleen via start.bat / start.sh.";
+  } else if (catalogError) {
+    scanInfo.textContent = `Kon het aantal pagina's niet ophalen (${describeError(catalogError)}).`;
+  }
+}
+
+function describeError(message) {
+  if (message === "NO_PROXY") {
+    return "Geen verbinding met de lokale server. Start de app via start.bat / start.sh.";
+  }
+  if (message.startsWith("UPSTREAM_")) {
+    return `Nintendo gaf een foutmelding (HTTP ${message.slice(9)}). Mogelijk geblokkeerd of te snel; probeer een langere vertraging.`;
+  }
+  return message;
+}
+
+async function scanLive(delayMs) {
   const games = [];
   const seen = new Set();
   let start = 0;
   let numFound = null;
+  let pagesDone = 0;
+  const t0 = performance.now();
 
   while (numFound === null || (start < numFound && start < MAX_ROWS_SAFETY)) {
     const data = await fetchViaLocalProxy(buildQueryUrl(start));
@@ -200,13 +286,19 @@ async function scanLive() {
       }
     }
 
+    pagesDone++;
     start += ROWS_PER_PAGE;
-    const pct = Math.min(100, Math.round((start / Math.max(numFound, 1)) * 100));
+    const totalPages = Math.max(1, Math.ceil(numFound / ROWS_PER_PAGE));
+    const pct = Math.min(100, Math.round((pagesDone / totalPages) * 100));
+    const elapsed = (performance.now() - t0) / 1000;
+    const eta = (elapsed / pagesDone) * Math.max(0, totalPages - pagesDone);
     progressBar.style.width = pct + "%";
-    progressLabel.textContent = `${games.length} van ${numFound} games opgehaald…`;
+    progressLabel.textContent =
+      `Pagina ${pagesDone} van ${totalPages} · ${games.length} games` +
+      (eta > 0 ? ` · nog ca. ${formatDuration(eta)}` : "");
 
     if (docs.length === 0) break;
-    if (start < numFound && start < MAX_ROWS_SAFETY) await sleep(PAGE_DELAY_MS);
+    if (start < numFound && start < MAX_ROWS_SAFETY) await sleep(delayMs);
   }
   return games;
 }
@@ -225,8 +317,27 @@ async function loadSnapshot() {
   return games;
 }
 
-async function runScan() {
+// Only works when served by server.py (POST /__save__ writes games.json).
+async function saveSnapshot(games) {
+  const sorted = [...games].sort((a, b) => a.title.localeCompare(b.title));
+  const res = await fetch("__save__", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      generated_at: new Date().toISOString(),
+      count: sorted.length,
+      games: sorted,
+    }),
+  });
+  if (!res.ok) throw new Error("SAVE_FAILED");
+}
+
+// force = true: live scan only, never fall back to games.json, and write a
+// fresh games.json when finished.
+async function runScan(force) {
   scanBtn.disabled = true;
+  forceBtn.disabled = true;
+  delayInput.disabled = true;
   errorBox.classList.add("hidden");
   progressEl.classList.remove("hidden");
   progressBar.style.width = "0%";
@@ -238,13 +349,28 @@ async function runScan() {
   allGames = [];
   dataNote = "";
 
+  const delayMs = Math.round(getDelaySeconds() * 1000);
+
   try {
-    try {
-      allGames = await scanLive();
+    if (force) {
+      allGames = await scanLive(delayMs);
+      if (allGames.length === 0) throw new Error("Nintendo gaf geen games terug, games.json is niet aangepast.");
       dataNote = "live opgehaald";
-    } catch (err) {
-      if (!err || err.message !== "NO_PROXY") throw err;
-      allGames = await loadSnapshot();
+      try {
+        await saveSnapshot(allGames);
+        dataNote += " · games.json opgeslagen";
+      } catch {
+        dataNote += " · games.json kon niet worden opgeslagen";
+      }
+    } else {
+      try {
+        allGames = await scanLive(delayMs);
+        dataNote = "live opgehaald";
+      } catch (err) {
+        const m = err && err.message;
+        if (m !== "NO_PROXY" && !(m && m.startsWith("UPSTREAM_"))) throw err;
+        allGames = await loadSnapshot();
+      }
     }
 
     progressBar.style.width = "100%";
@@ -254,16 +380,19 @@ async function runScan() {
     applyFilters();
   } catch (err) {
     console.error(err);
-    if (err && err.message === "NO_SNAPSHOT") {
+    const m = err && err.message ? err.message : String(err);
+    if (m === "NO_SNAPSHOT") {
       errorBox.textContent =
         "Geen data gevonden. Start in GitHub de workflow 'Update games.json' " +
         "(Actions-tab, Run workflow) en probeer het over een minuut opnieuw.";
     } else {
-      errorBox.textContent = "Scan mislukt: " + (err && err.message ? err.message : err);
+      errorBox.textContent = "Scan mislukt: " + describeError(m);
     }
     errorBox.classList.remove("hidden");
   } finally {
     scanBtn.disabled = false;
+    forceBtn.disabled = false;
+    delayInput.disabled = false;
     setTimeout(() => progressEl.classList.add("hidden"), 800);
   }
 }
@@ -413,7 +542,9 @@ function render(games) {
 // ---------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------
-scanBtn.addEventListener("click", runScan);
+scanBtn.addEventListener("click", () => runScan(false));
+forceBtn.addEventListener("click", () => runScan(true));
+delayInput.addEventListener("input", renderScanInfo);
 
 document.querySelectorAll(".seg").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -484,3 +615,4 @@ document.querySelectorAll(".chip[data-preset]").forEach((btn) => {
 });
 
 sourceLink.href = SOURCE_URLS.all;
+checkCatalog();

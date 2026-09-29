@@ -3,7 +3,12 @@ name: Update games.json
 on:
   schedule:
     - cron: "*/30 * * * *" # every 30 minutes, change as you like
-  workflow_dispatch: {} # manual "Run workflow" button
+  workflow_dispatch: # manual "Run workflow" button
+    inputs:
+      delay:
+        description: "Seconds to wait between pages"
+        required: false
+        default: "0.35"
 
 permissions:
   contents: write
@@ -21,7 +26,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Fetch latest catalog
-        run: python scripts/fetch_games.py
+        env:
+          DELAY: ${{ inputs.delay }}
+        run: python scripts/fetch_games.py --delay "${DELAY:-0.35}"
       - name: Commit games.json if changed
         run: |
           git config user.name "github-actions[bot]"

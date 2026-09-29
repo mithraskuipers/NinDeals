@@ -4,6 +4,7 @@
 Runs server-side (GitHub Actions, or your own machine), so Nintendo's CORS
 rules do not apply. The website only reads the resulting games.json.
 """
+import argparse
 import json
 import re
 import sys
@@ -16,7 +17,7 @@ LOCALE = "nl"
 SOLR_URL = f"https://search.nintendo-europe.com/{LOCALE}/select"
 ROWS_PER_PAGE = 200
 MAX_ROWS_SAFETY = 20000
-PAGE_DELAY_SECONDS = 0.35
+DEFAULT_PAGE_DELAY_SECONDS = 0.35
 
 FIELDS = {
     "title": ["title", "title_s", "pageTitle"],
@@ -105,6 +106,12 @@ def fetch_page(start):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--delay", type=float, default=DEFAULT_PAGE_DELAY_SECONDS,
+                        help="seconds to wait between pages (default: %(default)s)")
+    args = parser.parse_args()
+    delay = max(0.0, args.delay)
+
     start, num_found, seen, games = 0, None, set(), []
     while num_found is None or (start < num_found and start < MAX_ROWS_SAFETY):
         print(f"Fetching start={start}", file=sys.stderr)
@@ -120,7 +127,7 @@ def main():
                 games.append(game)
         start += ROWS_PER_PAGE
         if start < num_found:
-            time.sleep(PAGE_DELAY_SECONDS)
+            time.sleep(delay)
 
     if not games:
         sys.exit("No games fetched, keeping the existing games.json")

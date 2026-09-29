@@ -30,9 +30,22 @@
     <p class="hero-sub">Eén overzicht van elke game in de Nintendo eShop, met het werkelijke kortingspercentage direct zichtbaar.</p>
 
     <div class="scan-row">
-      <button id="scanBtn" class="btn-primary">
-        <span class="btn-label">Start scan</span>
-      </button>
+      <div class="scan-buttons">
+        <button id="scanBtn" class="btn-primary">
+          <span class="btn-label">Start scan</span>
+        </button>
+        <button id="forceBtn" class="btn-secondary" title="Haalt alles opnieuw live op bij Nintendo en schrijft een nieuwe games.json (geen terugval op het bestaande bestand)">
+          Volledige herscan
+        </button>
+      </div>
+
+      <div class="scan-options">
+        <label for="delayInput">Vertraging tussen pagina's</label>
+        <input id="delayInput" type="number" min="0" step="0.05" value="0.35" inputmode="decimal" />
+        <span>sec</span>
+      </div>
+
+      <div id="scanInfo" class="scan-info">Aantal pagina's ophalen…</div>
       <a id="sourceLink" class="source-link" href="#" target="_blank" rel="noopener">Bekijk bron op Nintendo.com ↗</a>
     </div>
 

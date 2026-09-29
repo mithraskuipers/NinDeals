@@ -152,6 +152,66 @@ main {
   transform: none;
 }
 
+.scan-buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.btn-secondary {
+  border: 1px solid var(--line);
+  background: var(--bg-elevated);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 500;
+  padding: 13px 24px;
+  border-radius: 980px;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.btn-secondary:hover { background: rgba(0, 0, 0, 0.05); }
+.btn-secondary:active { transform: scale(0.97); }
+.btn-secondary:disabled {
+  color: rgba(0, 0, 0, 0.3);
+  cursor: default;
+  transform: none;
+  background: var(--bg-elevated);
+}
+
+.scan-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.scan-options input {
+  width: 76px;
+  border: 1px solid var(--line);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: 14px;
+  color: var(--ink);
+  font-family: inherit;
+  text-align: right;
+}
+
+.scan-options input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.scan-info {
+  font-size: 13px;
+  color: var(--ink-soft);
+  max-width: 480px;
+  line-height: 1.5;
+}
+
 .source-link {
   font-size: 13px;
   color: var(--ink-soft);
