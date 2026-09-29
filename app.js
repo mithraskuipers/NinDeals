@@ -18,7 +18,7 @@ const LOCALE = "nl";
 const SOLR_URL = `https://search.nintendo-europe.com/${LOCALE}/select`;
 const ROWS_PER_PAGE = 200;
 const MAX_ROWS_SAFETY = 20000;
-// Delay between pages is set by the user (#delayInput, default 0.35 s).
+// Delay between pages is set by the user (#delayInput, default 1 s).
 const SNAPSHOT_URL = "games.json";
 
 const FIELD_CANDIDATES = {
@@ -330,6 +330,25 @@ async function saveSnapshot(games) {
     }),
   });
   if (!res.ok) throw new Error("SAVE_FAILED");
+  try {
+    return await res.json();
+  } catch {
+    return {};
+  }
+}
+
+function describeGit(git) {
+  if (!git) return "games.json opgeslagen";
+  switch (git.status) {
+    case "pushed":
+      return "games.json opgeslagen en naar GitHub gepusht";
+    case "unchanged":
+      return "games.json opgeslagen (geen wijzigingen voor GitHub)";
+    case "failed":
+      return `games.json opgeslagen, maar pushen naar GitHub mislukte: ${git.detail}`;
+    default:
+      return `games.json opgeslagen (niet gepusht: ${git.detail})`;
+  }
 }
 
 // force = true: live scan only, never fall back to games.json, and write a
@@ -356,9 +375,10 @@ async function runScan(force) {
       allGames = await scanLive(delayMs);
       if (allGames.length === 0) throw new Error("Nintendo gaf geen games terug, games.json is niet aangepast.");
       dataNote = "live opgehaald";
+      progressLabel.textContent = "games.json opslaan en naar GitHub pushen…";
       try {
-        await saveSnapshot(allGames);
-        dataNote += " · games.json opgeslagen";
+        const result = await saveSnapshot(allGames);
+        dataNote += " · " + describeGit(result && result.git);
       } catch {
         dataNote += " · games.json kon niet worden opgeslagen";
       }
@@ -377,6 +397,8 @@ async function runScan(force) {
     progressLabel.textContent = `Klaar, ${allGames.length} games.`;
     controlsEl.classList.remove("hidden");
     summaryEl.classList.remove("hidden");
+    buildYearChips();
+    syncReleaseUI();
     applyFilters();
   } catch (err) {
     console.error(err);
@@ -434,9 +456,12 @@ function applyFilters() {
 
   const from = releaseFrom.value; // "YYYY-MM-DD" strings compare correctly
   const to = releaseTo.value;
+  // In the default state (no start date, end = today) games without a known
+  // release date stay visible. Once you pick anything else, a date is required.
+  const defaultRange = !from && to === todayISO();
   if (from || to) {
     games = games.filter((g) => {
-      if (!g.released) return false;
+      if (!g.released) return defaultRange;
       if (from && g.released < from) return false;
       if (to && g.released > to) return false;
       return true;
@@ -592,27 +617,136 @@ priceMax.addEventListener("input", () => {
   applyFilters();
 });
 
-releaseFrom.addEventListener("change", applyFilters);
-releaseTo.addEventListener("change", applyFilters);
+// ---------------------------------------------------------------------
+// Release date UI (touch friendly: chips first, date pickers as fallback)
+// ---------------------------------------------------------------------
+const presetChips = document.getElementById("presetChips");
+const yearRow = document.getElementById("yearRow");
+const yearChips = document.getElementById("yearChips");
+const releaseRangeVal = document.getElementById("releaseRangeVal");
+
+function toISO(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 function isoDaysAgo(days) {
   const d = new Date();
   d.setDate(d.getDate() - days);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return toISO(d);
 }
 
-document.querySelectorAll(".chip[data-preset]").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    if (btn.dataset.preset === "clear") {
-      releaseFrom.value = "";
-      releaseTo.value = "";
-    } else {
-      releaseFrom.value = isoDaysAgo(parseInt(btn.dataset.preset, 10));
-      releaseTo.value = "";
-    }
-    if (allGames.length) applyFilters();
+function todayISO() {
+  return isoDaysAgo(0);
+}
+
+// [from, to] for a preset chip; "" means no limit on that side.
+function presetRange(key) {
+  const today = todayISO();
+  switch (key) {
+    case "released": return ["", today];
+    case "30": return [isoDaysAgo(30), today];
+    case "90": return [isoDaysAgo(90), today];
+    case "365": return [isoDaysAgo(365), today];
+    case "year": return [`${new Date().getFullYear()}-01-01`, today];
+    default: return ["", ""]; // "all"
+  }
+}
+
+// If the current range is whole calendar years, returns [firstYear, lastYear].
+function wholeYearRange() {
+  const f = releaseFrom.value;
+  const t = releaseTo.value;
+  if (f.endsWith("-01-01") && t.endsWith("-12-31")) {
+    return [parseInt(f.slice(0, 4), 10), parseInt(t.slice(0, 4), 10)];
+  }
+  return null;
+}
+
+function syncReleaseUI() {
+  const from = releaseFrom.value;
+  const to = releaseTo.value;
+
+  presetChips.querySelectorAll(".chip").forEach((btn) => {
+    const [pf, pt] = presetRange(btn.dataset.preset);
+    btn.classList.toggle("active", pf === from && pt === to);
   });
+
+  const wy = wholeYearRange();
+  yearChips.querySelectorAll(".chip").forEach((btn) => {
+    const y = parseInt(btn.dataset.year, 10);
+    btn.classList.toggle("active", !!wy && y >= wy[0] && y <= wy[1]);
+  });
+
+  let text;
+  if (!from && !to) text = "alles";
+  else if (!from && to === todayISO()) text = "tot vandaag";
+  else text = `${from ? formatDate(from) : "begin"} \u2013 ${to ? formatDate(to) : "nu"}`;
+  releaseRangeVal.textContent = text;
+}
+
+function onReleaseChange() {
+  syncReleaseUI();
+  if (allGames.length) applyFilters();
+}
+
+function buildYearChips() {
+  yearChips.innerHTML = "";
+  let minY = Infinity;
+  let maxY = new Date().getFullYear();
+  for (const g of allGames) {
+    if (!g.released) continue;
+    const y = parseInt(g.released.slice(0, 4), 10);
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  if (minY === Infinity) {
+    yearRow.classList.add("hidden"); // snapshot without release dates
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (let y = maxY; y >= minY; y--) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "chip";
+    btn.dataset.year = String(y);
+    btn.textContent = String(y);
+    frag.appendChild(btn);
+  }
+  yearChips.appendChild(frag);
+  yearRow.classList.remove("hidden");
+}
+
+presetChips.addEventListener("click", (e) => {
+  const btn = e.target.closest(".chip");
+  if (!btn) return;
+  const [from, to] = presetRange(btn.dataset.preset);
+  releaseFrom.value = from;
+  releaseTo.value = to;
+  onReleaseChange();
 });
+
+yearChips.addEventListener("click", (e) => {
+  const btn = e.target.closest(".chip");
+  if (!btn) return;
+  const y = parseInt(btn.dataset.year, 10);
+  const wy = wholeYearRange();
+  let lo = y;
+  let hi = y;
+  // exactly one year selected and another one tapped: make it a period
+  if (wy && wy[0] === wy[1] && wy[0] !== y) {
+    lo = Math.min(wy[0], y);
+    hi = Math.max(wy[0], y);
+  }
+  releaseFrom.value = `${lo}-01-01`;
+  releaseTo.value = `${hi}-12-31`;
+  onReleaseChange();
+});
+
+releaseFrom.addEventListener("change", onReleaseChange);
+releaseTo.addEventListener("change", onReleaseChange);
+
+releaseTo.value = todayISO(); // default: only games released up to today
+syncReleaseUI();
 
 sourceLink.href = SOURCE_URLS.all;
 checkCatalog();

@@ -8,7 +8,7 @@ on:
       delay:
         description: "Seconds to wait between pages"
         required: false
-        default: "0.35"
+        default: "1"
 
 permissions:
   contents: write
@@ -28,7 +28,7 @@ jobs:
       - name: Fetch latest catalog
         env:
           DELAY: ${{ inputs.delay }}
-        run: python scripts/fetch_games.py --delay "${DELAY:-0.35}"
+        run: python scripts/fetch_games.py --delay "${DELAY:-1}"
       - name: Commit games.json if changed
         run: |
           git config user.name "github-actions[bot]"

@@ -17,7 +17,7 @@ LOCALE = "nl"
 SOLR_URL = f"https://search.nintendo-europe.com/{LOCALE}/select"
 ROWS_PER_PAGE = 200
 MAX_ROWS_SAFETY = 20000
-DEFAULT_PAGE_DELAY_SECONDS = 0.35
+DEFAULT_PAGE_DELAY_SECONDS = 1.0
 
 FIELDS = {
     "title": ["title", "title_s", "pageTitle"],

@@ -5,7 +5,10 @@ GET /__proxy__?target=<url> fetches that URL server-side (no CORS there) and
 returns it. Only Nintendo's search API host is allowed.
 """
 import json
+import os
+import subprocess
 import sys
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -16,6 +19,62 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
 ALLOWED_HOSTS = {"search.nintendo-europe.com"}
 SAVE_PATH = Path(__file__).resolve().parent / "games.json"
 MAX_SAVE_BYTES = 100 * 1024 * 1024
+SAVE_LOCK = threading.Lock()
+# Set NINDEALS_NO_GIT=1 to only write games.json and never touch git.
+NO_GIT = os.environ.get("NINDEALS_NO_GIT") == "1"
+COMMIT_MESSAGE = "chore: update games.json (full rescan)"
+
+
+def run_git(*args, timeout=90):
+    return subprocess.run(
+        ["git", *args], cwd=SAVE_PATH.parent, capture_output=True, text=True,
+        timeout=timeout, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+    )
+
+
+def git_error(result):
+    text = (result.stderr or result.stdout or "").strip()
+    return text.splitlines()[-1] if text else f"exit code {result.returncode}"
+
+
+def publish_to_git():
+    """Commit and push games.json. Returns (status, detail).
+
+    status is one of: pushed, unchanged, skipped, failed.
+    """
+    if NO_GIT:
+        return "skipped", "git staat uit (NINDEALS_NO_GIT=1)"
+    try:
+        inside = run_git("rev-parse", "--is-inside-work-tree")
+        if inside.returncode != 0:
+            return "skipped", "map is geen git-repository"
+        added = run_git("add", "games.json")
+        if added.returncode != 0:
+            return "failed", git_error(added)
+        if run_git("diff", "--cached", "--quiet", "--", "games.json").returncode == 0:
+            return "unchanged", "geen wijzigingen"
+        # "-- games.json" so nothing else you may have staged is committed
+        commit = run_git("commit", "-m", COMMIT_MESSAGE, "--", "games.json")
+        if commit.returncode != 0:
+            return "failed", git_error(commit)
+        push = run_git("push")
+        if push.returncode != 0:
+            # The scheduled GitHub Action may have pushed in the meantime:
+            # replay our commit on top of it, our games.json wins conflicts.
+            pull = run_git("pull", "--rebase", "--autostash", "-X", "theirs")
+            if pull.returncode != 0:
+                run_git("rebase", "--abort")
+                return "failed", git_error(pull)
+            push = run_git("push")
+            if push.returncode != 0:
+                return "failed", git_error(push)
+        return "pushed", "gepusht"
+    except FileNotFoundError:
+        return "skipped", "git is niet geinstalleerd"
+    except subprocess.TimeoutExpired:
+        return "failed", "git duurde te lang (inloggegevens nodig?)"
+    except Exception as exc:  # noqa: BLE001
+        return "failed", str(exc)
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -47,10 +106,13 @@ class Handler(SimpleHTTPRequestHandler):
             return
         payload = {"generated_at": data.get("generated_at"),
                    "count": len(games), "games": games}
-        tmp = SAVE_PATH.with_name("games.json.tmp")
-        tmp.write_bytes(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
-        tmp.replace(SAVE_PATH)
-        body = b'{"ok":true}'
+        with SAVE_LOCK:
+            tmp = SAVE_PATH.with_name("games.json.tmp")
+            tmp.write_bytes(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+            tmp.replace(SAVE_PATH)
+            git_status, git_detail = publish_to_git()
+        body = json.dumps({"ok": True,
+                           "git": {"status": git_status, "detail": git_detail}}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

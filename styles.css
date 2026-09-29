@@ -323,8 +323,10 @@ main {
   border: 1px solid var(--line);
   background: var(--bg);
   border-radius: var(--radius-sm);
-  padding: 8px 12px;
-  font-size: 14px;
+  padding: 10px 12px;
+  min-height: 44px;
+  width: 100%;
+  font-size: 16px; /* 16px stops iOS from zooming in on focus */
   color: var(--ink);
   font-family: inherit;
 }
@@ -334,24 +336,75 @@ main {
   outline-offset: 1px;
 }
 
-.preset-row {
-  flex-direction: row;
+.release-block { flex-direction: column; align-items: stretch; }
+.release-block > .field {
+  gap: 12px;
+  min-width: 0;   /* otherwise the nowrap year chips force the whole block wider than the card */
+  width: 100%;
+  max-width: 100%;
+}
+#yearRow { min-width: 0; max-width: 100%; }
+
+.chip-row {
+  display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
+.chip-scroll {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  max-width: 100%;
+  margin: 0 -4px;
+  padding: 0 4px 6px;
+  scrollbar-width: thin;
+}
+
 .chip {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 18px;
   border: 1px solid var(--line);
   background: var(--bg);
   color: var(--ink);
-  font-size: 13px;
-  padding: 8px 14px;
+  font-size: 15px;
+  font-weight: 500;
   border-radius: 999px;
   cursor: pointer;
-  transition: background 0.15s ease;
+  scroll-snap-align: start;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
 }
 
-.chip:hover { background: rgba(0, 0, 0, 0.06); }
+.chip:active { transform: scale(0.96); }
+
+@media (hover: hover) {
+  .chip:hover { background: rgba(0, 0, 0, 0.06); }
+}
+
+.chip.active,
+.chip.active:hover {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+
+.date-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.date-pair .field { min-width: 0; }
+
+.hint {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-top: 2px;
+}
 
 .field.checkbox {
   flex-direction: row;
@@ -485,6 +538,8 @@ input[type="range"] {
 }
 
 @media (max-width: 640px) {
+  #presetChips { display: grid; grid-template-columns: 1fr 1fr; }
+  #presetChips .chip { width: 100%; padding: 0 10px; }
   .hero h1 { font-size: 32px; }
   .hero-sub { font-size: 16px; }
   .topbar-inner { flex-direction: column; align-items: stretch; gap: 10px; }

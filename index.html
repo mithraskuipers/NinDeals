@@ -41,7 +41,7 @@
 
       <div class="scan-options">
         <label for="delayInput">Vertraging tussen pagina's</label>
-        <input id="delayInput" type="number" min="0" step="0.05" value="0.35" inputmode="decimal" />
+        <input id="delayInput" type="number" min="0" step="0.05" value="1" inputmode="decimal" />
         <span>sec</span>
       </div>
 
@@ -97,19 +97,34 @@
       </div>
     </div>
 
-    <div class="controls-row">
-      <div class="field">
-        <label for="releaseFrom">Uitgebracht vanaf</label>
-        <input id="releaseFrom" type="date" />
-      </div>
-      <div class="field">
-        <label for="releaseTo">Uitgebracht tot</label>
-        <input id="releaseTo" type="date" />
-      </div>
-      <div class="field preset-row">
-        <button type="button" class="chip" data-preset="30">Laatste 30 dagen</button>
-        <button type="button" class="chip" data-preset="365">Laatste jaar</button>
-        <button type="button" class="chip" data-preset="clear">Wis datum</button>
+    <div class="controls-row release-block">
+      <div class="field grow">
+        <label>Uitgebracht: <span id="releaseRangeVal">tot vandaag</span></label>
+
+        <div id="presetChips" class="chip-row">
+          <button type="button" class="chip" data-preset="released">Tot vandaag</button>
+          <button type="button" class="chip" data-preset="all">Alles</button>
+          <button type="button" class="chip" data-preset="30">Laatste 30 dagen</button>
+          <button type="button" class="chip" data-preset="90">Laatste 3 maanden</button>
+          <button type="button" class="chip" data-preset="year">Dit jaar</button>
+          <button type="button" class="chip" data-preset="365">Laatste jaar</button>
+        </div>
+
+        <div id="yearRow" class="hidden">
+          <div id="yearChips" class="chip-row chip-scroll"></div>
+          <div class="hint">Tik een jaar. Tik daarna een tweede jaar voor een periode.</div>
+        </div>
+
+        <div class="date-pair">
+          <div class="field">
+            <label for="releaseFrom">Uitgebracht vanaf</label>
+            <input id="releaseFrom" type="date" />
+          </div>
+          <div class="field">
+            <label for="releaseTo">Uitgebracht tot</label>
+            <input id="releaseTo" type="date" />
+          </div>
+        </div>
       </div>
     </div>
   </section>
