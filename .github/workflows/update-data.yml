@@ -1,0 +1,35 @@
+name: Update games.json
+
+on:
+  schedule:
+    - cron: "*/30 * * * *" # every 30 minutes, change as you like
+  workflow_dispatch: {} # manual "Run workflow" button
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-games
+  cancel-in-progress: true
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch latest catalog
+        run: python scripts/fetch_games.py
+      - name: Commit games.json if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add games.json
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "chore: update games.json"
+            git push
+          fi

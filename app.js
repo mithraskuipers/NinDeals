@@ -1,19 +1,17 @@
 /* ----------------------------------------------------------------------
    NinDeals
    ----------------------------------------------------------------------
-   Pure client-side, live, on-demand. Nothing is stored anywhere except
-   in memory for this browser session.
+   Two ways to get the data, tried in this order on "Start scan":
 
-   Nintendo's search backend is an Apache Solr instance. Solr's JSON
-   response writer supports a "json.wrf" callback parameter, i.e. JSONP:
-   the classic pre-CORS technique of loading cross-origin JSON via a
-   <script> tag instead of fetch(). Script tags are never subject to CORS,
-   so this reaches Nintendo's API directly from the browser with no proxy
-   and no backend of any kind.
+   1. Live: when the page is served by server.py (start.bat / start.sh),
+      that small Python server fetches Nintendo's API for the page, so the
+      scan is live.
+   2. Snapshot: on GitHub Pages there is no server, and Nintendo's API only
+      answers requests from nintendo.com. So a scheduled GitHub Action
+      (.github/workflows/update-data.yml) fetches the catalog and commits
+      games.json, and the page reads that file. Same-origin, nothing to block.
 
-   This depends on Nintendo's Solr instance having JSONP enabled. If it
-   ever isn't (some Solr configs disable json.wrf for security reasons),
-   the request below will time out — see the error message in that case.
+   Everything shown is kept in memory for this browser session only.
    ------------------------------------------------------------------- */
 
 const LOCALE = "nl";
@@ -21,7 +19,7 @@ const SOLR_URL = `https://search.nintendo-europe.com/${LOCALE}/select`;
 const ROWS_PER_PAGE = 200;
 const MAX_ROWS_SAFETY = 20000;
 const PAGE_DELAY_MS = 350; // small pause between requests, be gentle on the API
-const JSONP_TIMEOUT_MS = 12000;
+const SNAPSHOT_URL = "games.json";
 
 const FIELD_CANDIDATES = {
   title: ["title", "title_s", "pageTitle"],
@@ -45,7 +43,7 @@ const SOURCE_URLS = {
 
 let allGames = [];
 let currentSystem = "all";
-let jsonpCounter = 0;
+let dataNote = "";
 
 // ---------------------------------------------------------------------
 // DOM refs
@@ -72,53 +70,24 @@ const priceMax = document.getElementById("priceMax");
 const priceRangeVal = document.getElementById("priceRangeVal");
 
 // ---------------------------------------------------------------------
-// JSONP transport (no server, no proxy, no CORS involved at all)
+// Data sources
 // ---------------------------------------------------------------------
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function fetchViaJsonp(baseUrl, timeoutMs = JSONP_TIMEOUT_MS) {
-  return new Promise((resolve, reject) => {
-    const callbackName = `nindeals_cb_${Date.now()}_${jsonpCounter++}`;
-    const script = document.createElement("script");
-    let settled = false;
-
-    const cleanup = () => {
-      delete window[callbackName];
-      script.remove();
-      clearTimeout(timer);
-    };
-
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(
-        new Error(
-          "Geen antwoord (timeout). Nintendo's zoekserver ondersteunt mogelijk geen JSONP meer."
-        )
-      );
-    }, timeoutMs);
-
-    window[callbackName] = (data) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(data);
-    };
-
-    script.onerror = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(new Error("Kon de zoek-API niet laden (scriptfout)."));
-    };
-
-    const separator = baseUrl.includes("?") ? "&" : "?";
-    script.src = `${baseUrl}${separator}json.wrf=${callbackName}`;
-    document.head.appendChild(script);
-  });
+// Only exists when served by server.py. Anywhere else this is a 404.
+async function fetchViaLocalProxy(url) {
+  const res = await fetch(`__proxy__?target=${encodeURIComponent(url)}`);
+  if (!res.ok) throw new Error("NO_PROXY");
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error("NO_PROXY");
+  }
+  if (!data || !data.response) throw new Error("NO_PROXY");
+  return data;
 }
 
 // ---------------------------------------------------------------------
@@ -190,6 +159,51 @@ function buildQueryUrl(start) {
 // ---------------------------------------------------------------------
 // Scan
 // ---------------------------------------------------------------------
+async function scanLive() {
+  const games = [];
+  const seen = new Set();
+  let start = 0;
+  let numFound = null;
+
+  while (numFound === null || (start < numFound && start < MAX_ROWS_SAFETY)) {
+    const data = await fetchViaLocalProxy(buildQueryUrl(start));
+    const resp = data.response;
+    numFound = resp.numFound;
+    const docs = resp.docs || [];
+
+    for (const doc of docs) {
+      const game = normalizeDoc(doc);
+      if (game && !seen.has(game.id)) {
+        seen.add(game.id);
+        games.push(game);
+      }
+    }
+
+    start += ROWS_PER_PAGE;
+    const pct = Math.min(100, Math.round((start / Math.max(numFound, 1)) * 100));
+    progressBar.style.width = pct + "%";
+    progressLabel.textContent = `${games.length} van ${numFound} games opgehaald…`;
+
+    if (docs.length === 0) break;
+    if (start < numFound && start < MAX_ROWS_SAFETY) await sleep(PAGE_DELAY_MS);
+  }
+  return games;
+}
+
+async function loadSnapshot() {
+  progressBar.style.width = "60%";
+  progressLabel.textContent = "Games laden…";
+  const res = await fetch(`${SNAPSHOT_URL}?t=${Date.now()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("NO_SNAPSHOT");
+  const data = await res.json();
+  const games = data.games || [];
+  if (games.length === 0) throw new Error("NO_SNAPSHOT");
+  dataNote = data.generated_at
+    ? `bijgewerkt ${new Date(data.generated_at).toLocaleString("nl-NL")}`
+    : "snapshot";
+  return games;
+}
+
 async function runScan() {
   scanBtn.disabled = true;
   errorBox.classList.add("hidden");
@@ -201,47 +215,31 @@ async function runScan() {
   gridEl.innerHTML = "";
   emptyStateEl.classList.add("hidden");
   allGames = [];
+  dataNote = "";
 
   try {
-    let start = 0;
-    let numFound = null;
-    const seen = new Set();
-
-    while (numFound === null || (start < numFound && start < MAX_ROWS_SAFETY)) {
-      const data = await fetchViaJsonp(buildQueryUrl(start));
-      const resp = data.response;
-      if (!resp) throw new Error("Onverwacht antwoord van de zoek-API.");
-
-      numFound = resp.numFound;
-      const docs = resp.docs || [];
-
-      for (const doc of docs) {
-        const game = normalizeDoc(doc);
-        if (game && !seen.has(game.id)) {
-          seen.add(game.id);
-          allGames.push(game);
-        }
-      }
-
-      start += ROWS_PER_PAGE;
-      const pct = Math.min(100, Math.round((start / Math.max(numFound, 1)) * 100));
-      progressBar.style.width = pct + "%";
-      progressLabel.textContent = `${allGames.length} van ${numFound} games opgehaald…`;
-
-      if (docs.length === 0) break;
-      if (start < numFound && start < MAX_ROWS_SAFETY) {
-        await sleep(PAGE_DELAY_MS);
-      }
+    try {
+      allGames = await scanLive();
+      dataNote = "live opgehaald";
+    } catch (err) {
+      if (!err || err.message !== "NO_PROXY") throw err;
+      allGames = await loadSnapshot();
     }
 
-    progressLabel.textContent = `Klaar — ${allGames.length} games gevonden.`;
+    progressBar.style.width = "100%";
+    progressLabel.textContent = `Klaar, ${allGames.length} games.`;
     controlsEl.classList.remove("hidden");
     summaryEl.classList.remove("hidden");
     applyFilters();
   } catch (err) {
     console.error(err);
-    errorBox.textContent =
-      "Kon de Nintendo zoek-API niet bereiken via JSONP. " + (err.message || err);
+    if (err && err.message === "NO_SNAPSHOT") {
+      errorBox.textContent =
+        "Geen data gevonden. Start in GitHub de workflow 'Update games.json' " +
+        "(Actions-tab, Run workflow) en probeer het over een minuut opnieuw.";
+    } else {
+      errorBox.textContent = "Scan mislukt: " + (err && err.message ? err.message : err);
+    }
     errorBox.classList.remove("hidden");
   } finally {
     scanBtn.disabled = false;
@@ -306,7 +304,7 @@ function formatPrice(v) {
 }
 
 function render(games) {
-  summaryText.textContent = `${games.length} van ${allGames.length} games`;
+  summaryText.textContent = `${games.length} van ${allGames.length} games` + (dataNote ? ` · ${dataNote}` : "");
   gridEl.innerHTML = "";
 
   if (games.length === 0) {

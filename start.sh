@@ -14,7 +14,7 @@ else
 fi
 
 echo "Starting NinDeals on port $PORT..."
-$PYCMD -m http.server "$PORT" --bind 0.0.0.0 &
+$PYCMD server.py "$PORT" &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null' EXIT
 
