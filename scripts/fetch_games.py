@@ -25,6 +25,7 @@ FIELDS = {
                 "price_final_f", "price_has_discount_f"],
     "url": ["url", "url_s", "product_url_s"],
     "image": ["image_url_sq_s", "image_url_h2x1_s", "image_url", "image_url_s"],
+    "released": ["pretty_date_s", "dates_released_dts", "date_from", "release_date_s"],
 }
 OUTPUT_PATH = Path(__file__).resolve().parent.parent / "games.json"
 
@@ -42,6 +43,20 @@ def absolute_url(raw, title):
         return raw if raw.startswith("http") else f"https://www.nintendo.com{raw}"
     q = urllib.parse.quote(title or "")
     return f"https://www.nintendo.com/nl-nl/Zoeken/Zoeken-299117.html?q={q}"
+
+
+def parse_release_date(raw):
+    """Return the release date as 'YYYY-MM-DD', or None if unknown."""
+    if not raw:
+        return None
+    raw = str(raw).strip()
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", raw)          # 2024-07-05T00:00:00Z
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    m = re.match(r"^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$", raw)  # 05/07/2024 (dd/mm/yyyy)
+    if m:
+        return f"{m.group(3)}-{int(m.group(2)):02d}-{int(m.group(1)):02d}"
+    return None
 
 
 def normalize(doc):
@@ -73,6 +88,7 @@ def normalize(doc):
         "systems": systems,
         "isSwitch1": is1,
         "isSwitch2": is2,
+        "released": parse_release_date(first(doc, FIELDS["released"])),
         "url": absolute_url(first(doc, FIELDS["url"]), title),
         "image": first(doc, FIELDS["image"]),
     }

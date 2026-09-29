@@ -259,6 +259,40 @@ main {
   outline-offset: 1px;
 }
 
+.field input[type="date"] {
+  border: 1px solid var(--line);
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 14px;
+  color: var(--ink);
+  font-family: inherit;
+}
+
+.field input[type="date"]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.preset-row {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.chip:hover { background: rgba(0, 0, 0, 0.06); }
+
 .field.checkbox {
   flex-direction: row;
   align-items: center;

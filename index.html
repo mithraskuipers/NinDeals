@@ -57,6 +57,8 @@
           <option value="discount-desc">Hoogste korting</option>
           <option value="price-asc">Laagste prijs</option>
           <option value="price-desc">Hoogste prijs</option>
+          <option value="release-desc">Nieuwste uitgave</option>
+          <option value="release-asc">Oudste uitgave</option>
           <option value="title-asc">Titel A–Z</option>
         </select>
       </div>
@@ -79,6 +81,22 @@
           <input id="priceMin" type="range" min="0" max="80" value="0" step="1" />
           <input id="priceMax" type="range" min="0" max="80" value="80" step="1" />
         </div>
+      </div>
+    </div>
+
+    <div class="controls-row">
+      <div class="field">
+        <label for="releaseFrom">Uitgebracht vanaf</label>
+        <input id="releaseFrom" type="date" />
+      </div>
+      <div class="field">
+        <label for="releaseTo">Uitgebracht tot</label>
+        <input id="releaseTo" type="date" />
+      </div>
+      <div class="field preset-row">
+        <button type="button" class="chip" data-preset="30">Laatste 30 dagen</button>
+        <button type="button" class="chip" data-preset="365">Laatste jaar</button>
+        <button type="button" class="chip" data-preset="clear">Wis datum</button>
       </div>
     </div>
   </section>

@@ -33,6 +33,7 @@ const FIELD_CANDIDATES = {
   ],
   url: ["url", "url_s", "product_url_s"],
   image: ["image_url_sq_s", "image_url_h2x1_s", "image_url", "image_url_s"],
+  released: ["pretty_date_s", "dates_released_dts", "date_from", "release_date_s"],
 };
 
 const SOURCE_URLS = {
@@ -68,6 +69,8 @@ const minDiscountVal = document.getElementById("minDiscountVal");
 const priceMin = document.getElementById("priceMin");
 const priceMax = document.getElementById("priceMax");
 const priceRangeVal = document.getElementById("priceRangeVal");
+const releaseFrom = document.getElementById("releaseFrom");
+const releaseTo = document.getElementById("releaseTo");
 
 // ---------------------------------------------------------------------
 // Data sources
@@ -113,6 +116,23 @@ function absoluteUrl(rawUrl, title) {
   )}`;
 }
 
+// Returns "YYYY-MM-DD" or null.
+function parseReleaseDate(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); // 2024-07-05T00:00:00Z
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/); // 05/07/2024 (dd/mm/yyyy)
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  return null;
+}
+
+function formatDate(iso) {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-");
+  return `${d}-${m}-${y}`;
+}
+
 function normalizeDoc(doc) {
   const title = firstDefined(doc, FIELD_CANDIDATES.title);
   if (!title) return null;
@@ -139,6 +159,7 @@ function normalizeDoc(doc) {
     systems,
     isSwitch1,
     isSwitch2,
+    released: parseReleaseDate(firstDefined(doc, FIELD_CANDIDATES.released)),
     url: absoluteUrl(firstDefined(doc, FIELD_CANDIDATES.url), title),
     image: firstDefined(doc, FIELD_CANDIDATES.image) || null,
   };
@@ -282,7 +303,32 @@ function applyFilters() {
     return true;
   });
 
+  const from = releaseFrom.value; // "YYYY-MM-DD" strings compare correctly
+  const to = releaseTo.value;
+  if (from || to) {
+    games = games.filter((g) => {
+      if (!g.released) return false;
+      if (from && g.released < from) return false;
+      if (to && g.released > to) return false;
+      return true;
+    });
+  }
+
+  // Games without a release date always go last when sorting by date
+  const byDate = (dir) => (a, b) => {
+    if (!a.released && !b.released) return 0;
+    if (!a.released) return 1;
+    if (!b.released) return -1;
+    return dir * a.released.localeCompare(b.released);
+  };
+
   switch (sortSelect.value) {
+    case "release-desc":
+      games.sort(byDate(-1));
+      break;
+    case "release-asc":
+      games.sort(byDate(1));
+      break;
     case "price-asc":
       games.sort((a, b) => a.currentPrice - b.currentPrice);
       break;
@@ -340,7 +386,9 @@ function render(games) {
 
     const systems = document.createElement("div");
     systems.className = "card-systems";
-    systems.textContent = g.systems.join(", ");
+    systems.textContent = [g.systems.join(", "), formatDate(g.released)]
+      .filter(Boolean)
+      .join(" \u00b7 ");
 
     const prices = document.createElement("div");
     prices.className = "card-prices";
@@ -411,6 +459,28 @@ priceMax.addEventListener("input", () => {
   }
   syncPriceLabel();
   applyFilters();
+});
+
+releaseFrom.addEventListener("change", applyFilters);
+releaseTo.addEventListener("change", applyFilters);
+
+function isoDaysAgo(days) {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+document.querySelectorAll(".chip[data-preset]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (btn.dataset.preset === "clear") {
+      releaseFrom.value = "";
+      releaseTo.value = "";
+    } else {
+      releaseFrom.value = isoDaysAgo(parseInt(btn.dataset.preset, 10));
+      releaseTo.value = "";
+    }
+    if (allGames.length) applyFilters();
+  });
 });
 
 sourceLink.href = SOURCE_URLS.all;
