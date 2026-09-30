@@ -2,7 +2,10 @@ name: Update games.json
 
 on:
   schedule:
-    - cron: "*/30 * * * *" # every 30 minutes, change as you like
+    # Twice a day, in UTC. 11:05 = 12:05 CET / 13:05 CEST, 23:05 = 00:05 CET / 01:05 CEST,
+    # so in Dutch time each run lands just after the start of its half of the day
+    # (before noon / after noon), which is what the website checks for.
+    - cron: "5 11,23 * * *"
   workflow_dispatch: # manual "Run workflow" button
     inputs:
       delay:

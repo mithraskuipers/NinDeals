@@ -53,6 +53,7 @@ const scanBtn = document.getElementById("scanBtn");
 const forceBtn = document.getElementById("forceBtn");
 const delayInput = document.getElementById("delayInput");
 const scanInfo = document.getElementById("scanInfo");
+const dataStatus = document.getElementById("dataStatus");
 const sourceLink = document.getElementById("sourceLink");
 const progressEl = document.getElementById("progress");
 const progressBar = document.getElementById("progressBar");
@@ -303,18 +304,107 @@ async function scanLive(delayMs) {
   return games;
 }
 
-async function loadSnapshot() {
-  progressBar.style.width = "60%";
-  progressLabel.textContent = "Games laden…";
+// ---- Two snapshots per day: "voor 12:00" and "na 12:00" (Dutch time) ----
+const SLOT_TZ = "Europe/Amsterdam";
+
+function slotKey(date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: SLOT_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const get = (t) => parts.find((p) => p.type === t).value;
+  const half = parseInt(get("hour"), 10) < 12 ? "am" : "pm";
+  return `${get("year")}-${get("month")}-${get("day")}-${half}`;
+}
+
+function slotLabel(date) {
+  return slotKey(date).endsWith("am") ? "vandaag voor 12:00" : "vandaag na 12:00";
+}
+
+function fmtDateTime(iso) {
+  return new Date(iso).toLocaleString("nl-NL", {
+    timeZone: SLOT_TZ,
+    dateStyle: "long",
+    timeStyle: "short",
+  });
+}
+
+let dataMeta = null; // { generatedAt: ISO string | null, source: "snapshot" | "live" }
+
+function setDataMeta(generatedAt, source) {
+  dataMeta = { generatedAt, source };
+  renderDataStatus();
+}
+
+function renderDataStatus() {
+  dataStatus.classList.remove("ok", "warn");
+  if (!dataMeta) {
+    dataStatus.classList.add("hidden");
+    return;
+  }
+  dataStatus.classList.remove("hidden");
+  if (!dataMeta.generatedAt) {
+    dataStatus.textContent = "Laatst opgehaald: onbekend";
+    dataStatus.classList.add("warn");
+    return;
+  }
+  const when = fmtDateTime(dataMeta.generatedAt);
+  const now = new Date();
+  if (dataMeta.source === "live") {
+    dataStatus.textContent = `Live opgehaald op ${when}`;
+    dataStatus.classList.add("ok");
+  } else if (slotKey(new Date(dataMeta.generatedAt)) === slotKey(now)) {
+    dataStatus.textContent = `Laatst opgehaald: ${when} · actueel voor ${slotLabel(now)}`;
+    dataStatus.classList.add("ok");
+  } else {
+    dataStatus.textContent =
+      `Laatst opgehaald: ${when} · verouderd, er is nog geen update voor ${slotLabel(now)}`;
+    dataStatus.classList.add("warn");
+  }
+}
+
+async function fetchSnapshot() {
   const res = await fetch(`${SNAPSHOT_URL}?t=${Date.now()}`, { cache: "no-store" });
   if (!res.ok) throw new Error("NO_SNAPSHOT");
   const data = await res.json();
-  const games = data.games || [];
-  if (games.length === 0) throw new Error("NO_SNAPSHOT");
-  dataNote = data.generated_at
-    ? `bijgewerkt ${new Date(data.generated_at).toLocaleString("nl-NL")}`
-    : "snapshot";
-  return games;
+  if (!data.games || data.games.length === 0) throw new Error("NO_SNAPSHOT");
+  return data;
+}
+
+// Used by the normal "Start scan" as fallback when there is no live connection.
+async function loadSnapshot() {
+  progressBar.style.width = "60%";
+  progressLabel.textContent = "Games laden…";
+  const data = await fetchSnapshot();
+  dataNote = data.generated_at ? `bijgewerkt ${fmtDateTime(data.generated_at)}` : "snapshot";
+  setDataMeta(data.generated_at || null, "snapshot");
+  return data.games;
+}
+
+function showResults() {
+  controlsEl.classList.remove("hidden");
+  summaryEl.classList.remove("hidden");
+  buildYearChips();
+  syncReleaseUI();
+  applyFilters();
+}
+
+function presentSnapshot(snap) {
+  allGames = snap.games;
+  dataNote = snap.generated_at ? `bijgewerkt ${fmtDateTime(snap.generated_at)}` : "snapshot";
+  setDataMeta(snap.generated_at || null, "snapshot");
+  showResults();
+}
+
+function showNoSnapshotError() {
+  errorBox.textContent =
+    "Geen data gevonden. Start in GitHub de workflow 'Update games.json' " +
+    "(Actions-tab, Run workflow) en probeer het over een minuut opnieuw.";
+  errorBox.classList.remove("hidden");
 }
 
 // Only works when served by server.py (POST /__save__ writes games.json).
@@ -353,20 +443,24 @@ function describeGit(git) {
 
 // force = true: live scan only, never fall back to games.json, and write a
 // fresh games.json when finished.
-async function runScan(force) {
+async function runScan(force, opts = {}) {
   scanBtn.disabled = true;
   forceBtn.disabled = true;
   delayInput.disabled = true;
   errorBox.classList.add("hidden");
   progressEl.classList.remove("hidden");
   progressBar.style.width = "0%";
-  progressLabel.textContent = "Verbinden…";
+  progressLabel.textContent = opts.auto
+    ? "Nog geen data voor dit dagdeel, automatisch ophalen…"
+    : "Verbinden…";
   controlsEl.classList.add("hidden");
   summaryEl.classList.add("hidden");
   gridEl.innerHTML = "";
   emptyStateEl.classList.add("hidden");
   allGames = [];
   dataNote = "";
+  dataMeta = null;
+  renderDataStatus();
 
   const delayMs = Math.round(getDelaySeconds() * 1000);
 
@@ -393,24 +487,21 @@ async function runScan(force) {
       }
     }
 
+    if (!dataMeta) setDataMeta(new Date().toISOString(), "live"); // live scan (snapshot sets its own)
     progressBar.style.width = "100%";
     progressLabel.textContent = `Klaar, ${allGames.length} games.`;
-    controlsEl.classList.remove("hidden");
-    summaryEl.classList.remove("hidden");
-    buildYearChips();
-    syncReleaseUI();
-    applyFilters();
+    showResults();
   } catch (err) {
     console.error(err);
     const m = err && err.message ? err.message : String(err);
     if (m === "NO_SNAPSHOT") {
-      errorBox.textContent =
-        "Geen data gevonden. Start in GitHub de workflow 'Update games.json' " +
-        "(Actions-tab, Run workflow) en probeer het over een minuut opnieuw.";
+      showNoSnapshotError();
     } else {
-      errorBox.textContent = "Scan mislukt: " + describeError(m);
+      errorBox.textContent =
+        (opts.auto ? "Automatisch verversen mislukt: " : "Scan mislukt: ") + describeError(m);
+      errorBox.classList.remove("hidden");
     }
-    errorBox.classList.remove("hidden");
+    if (opts.fallback) presentSnapshot(opts.fallback); // show the older data rather than nothing
   } finally {
     scanBtn.disabled = false;
     forceBtn.disabled = false;
@@ -749,4 +840,46 @@ releaseTo.value = todayISO(); // default: only games released up to today
 syncReleaseUI();
 
 sourceLink.href = SOURCE_URLS.all;
-checkCatalog();
+
+// On every visit: use games.json if it is from the current half of the day
+// (before / after 12:00 Dutch time), otherwise refresh it.
+async function initialLoad() {
+  progressEl.classList.remove("hidden");
+  progressBar.style.width = "30%";
+  progressLabel.textContent = "Controleren op bestaande data…";
+
+  let snap = null;
+  try {
+    snap = await fetchSnapshot();
+  } catch {
+    snap = null;
+  }
+
+  const fresh =
+    snap && snap.generated_at && slotKey(new Date(snap.generated_at)) === slotKey(new Date());
+  if (fresh) {
+    presentSnapshot(snap); // instant, no scan
+    progressEl.classList.add("hidden");
+    checkCatalog(); // only fills the info line under the buttons
+    return;
+  }
+
+  await checkCatalog();
+  if (catalogInfo) {
+    // stale or missing, and a local server is available: fetch a fresh copy
+    await runScan(true, { auto: true, fallback: snap });
+    return;
+  }
+
+  // No way to scan from here (e.g. GitHub Pages): show what there is
+  progressEl.classList.add("hidden");
+  if (snap) presentSnapshot(snap);
+  else showNoSnapshotError();
+  if (catalogError && catalogError !== "NO_PROXY") {
+    // a local server exists but Nintendo did not answer
+    errorBox.textContent = "Automatisch verversen niet mogelijk: " + describeError(catalogError);
+    errorBox.classList.remove("hidden");
+  }
+}
+
+initialLoad();

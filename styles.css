@@ -152,6 +152,20 @@ main {
   transform: none;
 }
 
+.data-status {
+  display: inline-block;
+  margin: 0 auto 22px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  line-height: 1.4;
+  background: rgba(120, 120, 128, 0.12);
+  color: var(--ink-soft);
+}
+
+.data-status.ok { background: #e6f5ec; color: var(--green); }
+.data-status.warn { background: #fff3e0; color: #a85a00; }
+
 .scan-buttons {
   display: flex;
   gap: 10px;
