@@ -70,6 +70,8 @@ const sortSelect = document.getElementById("sortSelect");
 const onSaleOnly = document.getElementById("onSaleOnly");
 const minDiscount = document.getElementById("minDiscount");
 const minDiscountVal = document.getElementById("minDiscountVal");
+const minOriginal = document.getElementById("minOriginal");
+const minOriginalVal = document.getElementById("minOriginalVal");
 const priceMin = document.getElementById("priceMin");
 const priceMax = document.getElementById("priceMax");
 const priceRangeVal = document.getElementById("priceRangeVal");
@@ -536,6 +538,12 @@ function applyFilters() {
     games = games.filter((g) => g.discountPct >= minD);
   }
 
+  // Regular price before the sale: find games that are normally expensive
+  const minOrig = parseFloat(minOriginal.value);
+  if (minOrig > 0) {
+    games = games.filter((g) => g.originalPrice >= minOrig);
+  }
+
   const pMin = parseFloat(priceMin.value);
   const pMax = parseFloat(priceMax.value);
   games = games.filter((g) => {
@@ -682,6 +690,11 @@ onSaleOnly.addEventListener("change", applyFilters);
 
 minDiscount.addEventListener("input", () => {
   minDiscountVal.textContent = minDiscount.value + "%";
+  applyFilters();
+});
+
+minOriginal.addEventListener("input", () => {
+  minOriginalVal.textContent = "€" + minOriginal.value;
   applyFilters();
 });
 
