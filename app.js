@@ -20,6 +20,7 @@ const ROWS_PER_PAGE = 200;
 const MAX_ROWS_SAFETY = 20000;
 // Delay between pages is set by the user (#delayInput, default 1 s).
 const SNAPSHOT_URL = "games.json";
+const HISTORY_URL = "history.json";
 
 const FIELD_CANDIDATES = {
   title: ["title", "title_s", "pageTitle"],
@@ -45,6 +46,8 @@ const SOURCE_URLS = {
 let allGames = [];
 let currentSystem = "all";
 let dataNote = "";
+let priceHistory = {}; // game id -> [[iso time, currentPrice, originalPrice], ...]
+let historyUpdatedAt = null;
 
 // ---------------------------------------------------------------------
 // DOM refs
@@ -393,6 +396,7 @@ function showResults() {
   buildYearChips();
   syncReleaseUI();
   applyFilters();
+  loadHistory(); // in the background, cards get their lowest price when it arrives
 }
 
 function presentSnapshot(snap) {
@@ -643,6 +647,8 @@ function render(games) {
       .filter(Boolean)
       .join(" \u00b7 ");
 
+    card._game = g;
+
     const prices = document.createElement("div");
     prices.className = "card-prices";
     const now = document.createElement("span");
@@ -657,6 +663,16 @@ function render(games) {
     }
 
     body.append(title, systems, prices);
+    const lowInfo = historyInfo(g);
+    if (lowInfo && lowInfo.entries.length > 1) {
+      const low = document.createElement("div");
+      const atLow = g.currentPrice <= lowInfo.low[1] + 0.005;
+      low.className = "card-low" + (atLow ? " at-low" : "");
+      low.textContent = atLow
+        ? "Laagste prijs tot nu toe"
+        : `Laagste: ${formatPrice(lowInfo.low[1])} (${formatShortDate(lowInfo.low[0])})`;
+      body.appendChild(low);
+    }
     card.append(imgDiv, body);
     frag.appendChild(card);
   }
@@ -664,8 +680,161 @@ function render(games) {
 }
 
 // ---------------------------------------------------------------------
+// Price history (history.json, one entry per price change per game)
+// ---------------------------------------------------------------------
+async function loadHistory() {
+  try {
+    const res = await fetch(`${HISTORY_URL}?t=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    priceHistory = data.games || {};
+    historyUpdatedAt = data.updated_at || null;
+    if (allGames.length) applyFilters();
+  } catch {
+    // no history yet: cards simply show no lowest price
+  }
+}
+
+// Lowest price is the first time that price was seen.
+function historyInfo(game) {
+  const entries = priceHistory[game.id];
+  if (!entries || entries.length === 0) return null;
+  let low = entries[0];
+  let high = entries[0];
+  for (const e of entries) {
+    if (e[1] < low[1]) low = e;
+    if (e[1] > high[1]) high = e;
+  }
+  return { entries, low, high };
+}
+
+function formatShortDate(iso) {
+  return new Date(iso).toLocaleDateString("nl-NL", {
+    timeZone: SLOT_TZ,
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function priceAxisLabel(v) {
+  return "€" + (v % 1 === 0 ? v.toFixed(0) : v.toFixed(2).replace(".", ","));
+}
+
+function buildChart(entries, lowPrice) {
+  const W = 640, H = 260, L = 50, R = 16, T = 16, B = 34;
+  const pts = entries.map((e) => ({ iso: e[0], t: Date.parse(e[0]), p: e[1], o: e[2] }));
+  const t0 = pts[0].t;
+  const tEnd = Math.max(Date.parse(historyUpdatedAt) || 0, pts[pts.length - 1].t);
+  const span = Math.max(tEnd - t0, 1);
+
+  let lo = Math.min(...pts.map((p) => p.p));
+  let hi = Math.max(...pts.map((p) => Math.max(p.p, p.o)));
+  const pad = Math.max((hi - lo) * 0.1, 0.5);
+  lo = Math.max(0, lo - pad);
+  hi += pad;
+
+  const x = (t) => L + ((t - t0) / span) * (W - L - R);
+  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const step = (key) => {
+    let d = `M${x(pts[0].t).toFixed(1)} ${y(pts[0][key]).toFixed(1)}`;
+    for (let i = 1; i < pts.length; i++) {
+      d += ` H${x(pts[i].t).toFixed(1)} V${y(pts[i][key]).toFixed(1)}`;
+    }
+    return d + ` H${x(tEnd).toFixed(1)}`;
+  };
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Prijsverloop">`;
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + ((hi - lo) * i) / 4;
+    svg += `<line class="hc-grid" x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>`;
+    svg += `<text class="hc-text" x="${L - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${priceAxisLabel(v)}</text>`;
+  }
+  const ticks = [[t0, "start"], [t0 + span / 2, "middle"], [tEnd, "end"]];
+  for (const [t, anchor] of ticks) {
+    svg += `<text class="hc-text" x="${x(t).toFixed(1)}" y="${H - 10}" text-anchor="${anchor}">${formatShortDate(new Date(t).toISOString())}</text>`;
+  }
+  svg += `<path class="hc-orig" d="${step("o")}"/>`;
+  svg += `<path class="hc-line" d="${step("p")}"/>`;
+  for (const p of pts) {
+    const isLow = p.p <= lowPrice + 0.005;
+    svg += `<circle class="hc-dot${isLow ? " low" : ""}" cx="${x(p.t).toFixed(1)}" cy="${y(p.p).toFixed(1)}" r="${isLow ? 5 : 3.5}">` +
+      `<title>${fmtDateTime(p.iso)}: ${formatPrice(p.p)}</title></circle>`;
+  }
+  return svg + "</svg>";
+}
+
+function statBox(label, value, sub, good) {
+  return `<div class="stat${good ? " good" : ""}"><div class="stat-label">${label}</div>` +
+    `<div class="stat-value">${value}</div>${sub ? `<div class="stat-sub">${sub}</div>` : ""}</div>`;
+}
+
+const historyModal = document.getElementById("historyModal");
+
+function openHistory(game) {
+  const info = historyInfo(game);
+  document.getElementById("historyTitle").textContent = game.title;
+  document.getElementById("historyLink").href = game.url;
+  const statsEl = document.getElementById("historyStats");
+  const chartEl = document.getElementById("historyChart");
+  const listEl = document.getElementById("historyList");
+
+  if (!info) {
+    statsEl.innerHTML = statBox("Huidige prijs", formatPrice(game.currentPrice), "", false);
+    chartEl.innerHTML = '<div class="history-note">Nog geen prijsgeschiedenis beschikbaar voor deze game.</div>';
+    listEl.innerHTML = "";
+  } else {
+    const { entries, low, high } = info;
+    const atLow = game.currentPrice <= low[1] + 0.005 && entries.length > 1;
+    statsEl.innerHTML =
+      statBox("Huidige prijs", formatPrice(game.currentPrice), game.discountPct > 0 ? `-${game.discountPct}%` : "", atLow) +
+      statBox("Laagste prijs", formatPrice(low[1]), `sinds ${formatShortDate(low[0])}`, atLow) +
+      statBox("Hoogste prijs", formatPrice(high[1]), formatShortDate(high[0]), false) +
+      statBox("Bijgehouden sinds", formatShortDate(entries[0][0]), `${entries.length - 1} prijswijziging${entries.length === 2 ? "" : "en"}`, false);
+
+    if (entries.length > 1) {
+      chartEl.innerHTML = buildChart(entries, low[1]) +
+        '<div class="hc-legend"><span>Doorgetrokken: verkoopprijs</span><span>Gestreept: normale prijs</span></div>';
+    } else {
+      chartEl.innerHTML =
+        `<div class="history-note">Prijs onveranderd sinds ${fmtDateTime(entries[0][0])}. ` +
+        "Zodra de prijs verandert verschijnt hier een grafiek.</div>";
+    }
+
+    listEl.innerHTML = [...entries].reverse().map((e) => {
+      const pct = e[2] > 0 && e[1] < e[2] ? ` (-${Math.round((1 - e[1] / e[2]) * 100)}%)` : "";
+      return `<div class="history-row"><span>${fmtDateTime(e[0])}</span><span>${formatPrice(e[1])}${pct}</span></div>`;
+    }).join("");
+  }
+
+  historyModal.classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+}
+
+function closeHistory() {
+  historyModal.classList.add("hidden");
+  document.body.style.overflow = "";
+}
+
+// ---------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------
+gridEl.addEventListener("click", (e) => {
+  if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return; // let the browser open the link
+  const card = e.target.closest(".card");
+  if (!card || !card._game) return;
+  e.preventDefault();
+  openHistory(card._game);
+});
+
+document.getElementById("historyClose").addEventListener("click", closeHistory);
+historyModal.addEventListener("click", (e) => {
+  if (e.target === historyModal) closeHistory();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !historyModal.classList.contains("hidden")) closeHistory();
+});
+
 scanBtn.addEventListener("click", () => runScan(false));
 forceBtn.addEventListener("click", () => runScan(true));
 delayInput.addEventListener("input", renderScanInfo);

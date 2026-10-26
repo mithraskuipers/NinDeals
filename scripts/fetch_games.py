@@ -13,6 +13,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from price_history import record
+
 LOCALE = "nl"
 SOLR_URL = f"https://search.nintendo-europe.com/{LOCALE}/select"
 ROWS_PER_PAGE = 200
@@ -29,6 +31,7 @@ FIELDS = {
     "released": ["pretty_date_s", "dates_released_dts", "date_from", "release_date_s"],
 }
 OUTPUT_PATH = Path(__file__).resolve().parent.parent / "games.json"
+HISTORY_PATH = OUTPUT_PATH.with_name("history.json")
 
 
 def first(doc, keys):
@@ -135,6 +138,7 @@ def main():
     games.sort(key=lambda g: g["title"])
     payload = {"generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                "count": len(games), "games": games}
+    record(HISTORY_PATH, games, payload["generated_at"], seed_from=OUTPUT_PATH)
     OUTPUT_PATH.write_text(json.dumps(payload, ensure_ascii=False))
     print(f"Wrote {len(games)} games", file=sys.stderr)
 

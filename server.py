@@ -9,20 +9,26 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent / "scripts"))
+from price_history import record  # noqa: E402
+
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
 ALLOWED_HOSTS = {"search.nintendo-europe.com"}
 SAVE_PATH = Path(__file__).resolve().parent / "games.json"
+HISTORY_PATH = SAVE_PATH.with_name("history.json")
 MAX_SAVE_BYTES = 100 * 1024 * 1024
 SAVE_LOCK = threading.Lock()
 # Set NINDEALS_NO_GIT=1 to only write games.json and never touch git.
 NO_GIT = os.environ.get("NINDEALS_NO_GIT") == "1"
-COMMIT_MESSAGE = "chore: update games.json (full rescan)"
+COMMIT_MESSAGE = "chore: update games.json and price history (full rescan)"
+TRACKED_FILES = ["games.json", "history.json"]
 
 
 def run_git(*args, timeout=90):
@@ -48,13 +54,13 @@ def publish_to_git():
         inside = run_git("rev-parse", "--is-inside-work-tree")
         if inside.returncode != 0:
             return "skipped", "map is geen git-repository"
-        added = run_git("add", "games.json")
+        added = run_git("add", *TRACKED_FILES)
         if added.returncode != 0:
             return "failed", git_error(added)
-        if run_git("diff", "--cached", "--quiet", "--", "games.json").returncode == 0:
+        if run_git("diff", "--cached", "--quiet", "--", *TRACKED_FILES).returncode == 0:
             return "unchanged", "geen wijzigingen"
-        # "-- games.json" so nothing else you may have staged is committed
-        commit = run_git("commit", "-m", COMMIT_MESSAGE, "--", "games.json")
+        # pathspec so nothing else you may have staged is committed
+        commit = run_git("commit", "-m", COMMIT_MESSAGE, "--", *TRACKED_FILES)
         if commit.returncode != 0:
             return "failed", git_error(commit)
         push = run_git("push")
@@ -113,7 +119,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
         payload = {"generated_at": data.get("generated_at"),
                    "count": len(games), "games": games}
+        stamp = payload["generated_at"] or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         with SAVE_LOCK:
+            record(HISTORY_PATH, games, stamp, seed_from=SAVE_PATH)
             tmp = SAVE_PATH.with_name("games.json.tmp")
             tmp.write_bytes(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
             tmp.replace(SAVE_PATH)
